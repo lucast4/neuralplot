@@ -4,7 +4,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 
-MAX_NUM_STIMS = 103
+MAX_NUM_STIMS=140
 
 EVENT_CODES_TO_EVENT_NAME = {
     9: 'trial_start',
@@ -19,7 +19,7 @@ EVENT_CODES_TO_EVENT_NAME = {
     14: 'manual_reward'
 }
 
-def loadNeuralplot(animal, date):
+def loadNeuralplot(animal, date, who='lucas'):
     """
     loads neuralplot object for given animal and date
     NOTE: Here is where to change dir paths to match your system :)
@@ -28,21 +28,42 @@ def loadNeuralplot(animal, date):
         subject = 'S1'
     elif animal == 'Pancho':
         subject = 'S2'
+
+
     
-    # basedir = '/home/danhan/code/prims_fixation_final'
-    basedir = '/lemur2/lucas/analyses/recordings/main/MIRROR/Visual/data'
+    if who == 'lucas':
+        # basedir = '/home/danhan/code/prims_fixation_final'
+        basedir = '/lemur2/lucas/analyses/recordings/main/MIRROR/Visual/data'
 
-    paths = {
-    'ml2_dir': f'{basedir}/{animal}/{date}/behavior_fixation',
-    # 'conditions_dir': f'{basedir}/primsfix_bothmonkey.txt', 
-    # 'tdt_dir_fixation': f'{basedir}/{animal}/{date}/tdt_fixation',
-    # 'tdt_dir_draw': f'{basedir}/{animal}/{date}/tdt_draw',
-    'tdt_dir_fixation': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
-    'tdt_dir_draw': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
-    'spikes_dir': f'{basedir}/{animal}/{date}/spikes_postprocess/DATSTRUCT_CLEAN_MERGED.mat'
-    }
+        paths = {
+        'ml2_dir': f'{basedir}/{animal}/{date}/behavior_fixation',
+        # 'conditions_dir': f'{basedir}/primsfix_bothmonkey.txt', 
+        # 'tdt_dir_fixation': f'{basedir}/{animal}/{date}/tdt_fixation',
+        # 'tdt_dir_draw': f'{basedir}/{animal}/{date}/tdt_draw',
+        'tdt_dir_fixation': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
+        'tdt_dir_draw': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
+        'spikes_dir': f'{basedir}/{animal}/{date}/spikes_postprocess/DATSTRUCT_CLEAN_MERGED.mat'
+        }
 
-    return Neuralplot(paths, animal, date)
+    elif who == 'theo':
+        basedir = '/home/danhan/code/fob_theo'
+        paths = {
+        'ml2_dir': f'{basedir}/{animal}/behavior/{date}',
+        'conditions_dir': f'{basedir}/{animal}/{date}_{animal}_conditions_groups.txt', 
+        'tdt_dir_fixation': f'{basedir}/{animal}/tdt/{date}',
+        'spikes_dir': f'{basedir}/{animal}/spikes_postprocess/{date}/DATSTRUCT_CLEAN_MERGED.mat'
+        }
+    elif who == 'mathias':
+        # Actually /code/data/quad_data... (?)
+        basedir = '/home/danhan/code/PATH'
+        paths = {
+        'ml2_dir': f'{basedir}/{animal}/behavior/{date}',
+        'conditions_dir': f'{basedir}/{animal}/{date}_{animal}_conditions_groups.txt', 
+        'tdt_dir_fixation': f'{basedir}/{animal}/tdt/{date}',
+        'spikes_dir': f'{basedir}/{animal}/spikes_postprocess/{date}/DATSTRUCT_CLEAN_MERGED.mat'
+        }
+
+    return Neuralplot(paths, animal, date, who)
 
 
 def filter_df(df: pd.DataFrame, filter_dict: dict) -> pd.DataFrame:
@@ -60,14 +81,41 @@ def filter_df(df: pd.DataFrame, filter_dict: dict) -> pd.DataFrame:
 
     return df[mask]
 
-def group_and_average(df, group_by, average_prefix):
+from scipy.ndimage import gaussian_filter1d
+import numpy as np
+import pandas as pd
+
+def group_and_average(
+    df,
+    group_by,
+    average_prefix,
+    smooth=True,
+    sigma=1,
+    smooth_mode="nearest"
+):
     """
-    basically SQL
-    Flexuibly handles multiple columns to average over
+    Group dataframe rows and compute mean/std/sem for all columns
+    starting with `average_prefix`.
+
+    Optionally smooth arrays using gaussian_filter1d.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+    group_by : str or list
+        Columns to group by.
+    average_prefix : str
+        Prefix used to select columns for aggregation.
+    smooth : bool, default=False
+        Whether to smooth arrays before averaging.
+    sigma : float, default=1
+        Gaussian kernel sigma for smoothing.
+    smooth_mode : str, default="nearest"
+        Boundary mode passed to gaussian_filter1d.
     """
 
-    #can change this if needed, right now will average all columns with given prefix
     cols_to_agg = [c for c in df.columns if c.startswith(average_prefix)]
+
     if not cols_to_agg:
         return None
 
@@ -75,31 +123,52 @@ def group_and_average(df, group_by, average_prefix):
         result = {}
 
         for col in cols_to_agg:
-            stack = list(group[col])
+
+            stack = [np.asarray(x) for x in group[col]]
+
             lengths = [len(x) for x in stack]
 
             # Ensure same-length arrays
             if len(set(lengths)) != 1:
                 raise ValueError(
-                    f"Arrays in column '{col}' have different lengths: {sorted(set(lengths))}"
+                    f"Arrays in column '{col}' have different lengths: "
+                    f"{sorted(set(lengths))}"
                 )
 
+            # Optional smoothing
+
+            if smooth:
+                stack = [
+                    gaussian_filter1d(x.astype('float64'), sigma=5, mode=smooth_mode)
+                    for x in stack
+                ]
+
+
             arr = np.vstack(stack)
+
+
             mean = arr.mean(axis=0)
-            std  = arr.std(axis=0, ddof=1) if arr.shape[0] > 1 else np.zeros_like(mean)
-            sem  = std / np.sqrt(arr.shape[0]) if arr.shape[0] > 1 else np.zeros_like(mean)
+
+            if arr.shape[0] > 1:
+                std = arr.std(axis=0, ddof=1)
+                sem = std / np.sqrt(arr.shape[0])
+            else:
+                std = np.zeros_like(mean)
+                sem = np.zeros_like(mean)
 
             result[f"{col}_mean"] = mean
             result[f"{col}_std"]  = std
             result[f"{col}_sem"]  = sem
 
         result["n"] = arr.shape[0]
+
         return pd.Series(result)
 
     grouped = df.groupby(group_by).apply(agg).reset_index()
 
+    # Ensure outputs remain ndarray
     for col in grouped.columns:
-        if col.endswith("_mean") or col.endswith("_std") or col.endswith("_sem"):
+        if col.endswith(("_mean", "_std", "_sem")):
             grouped[col] = grouped[col].apply(np.asarray)
 
     return grouped
@@ -120,8 +189,9 @@ def group_and_average(df, group_by, average_prefix):
 
 
 class Neuralplot:
-    def __init__(self, paths, animal, date):
+    def __init__(self, paths, animal, date, who='lucas'):
         self.paths = paths
+        self.Who = who
         """
         format (if not use load function):
             paths = {
@@ -181,8 +251,11 @@ class Neuralplot:
         """
         from tdt import read_block
         tdt_list_fixation = os.listdir(self.paths['tdt_dir_fixation'])
-        tdt_list_draw = os.listdir(self.paths['tdt_dir_draw'])
-        tdt_list_all = tdt_list_fixation + tdt_list_draw
+        if 'tdt_dir_draw' in list(self.paths.keys()):
+            tdt_list_draw = os.listdir(self.paths['tdt_dir_draw'])
+            tdt_list_all = tdt_list_fixation + tdt_list_draw
+        else:
+            tdt_list_all = tdt_list_fixation
         tdt_dat_dict = {}
         evs_load = ['streams', 'epocs']
         stores_load = ['SMa1', 'Rew/','PhD2']
@@ -472,7 +545,8 @@ class Neuralplot:
                     df.at[dfidx, f'spike_counts_{unit_index}'] = counts
                     df.at[dfidx, f'bin_times_{unit_index}'] = bin_centers
         if group_by is not None:
-            df = group_and_average(df, group_by, 'spike_counts')
+            df = group_and_average(df, group_by, 'spike_counts',\
+                                   smooth=True,sigma=kernel_sigma)
             if df is None:
                 #No spikes here
                 return {}
@@ -486,28 +560,20 @@ class Neuralplot:
                     ax = np.atleast_1d(ax)
                     ax_plot = 0
                     for index,group in zip(df.index,data):
-                        mean = gaussian_filter1d(
-                            group,
-                            sigma=kernel_sigma,
-                            mode='nearest'
-                        )
-                        sem = gaussian_filter1d(
-                            df.at[index,f'spike_counts_{unit_index}_sem'],
-                            sigma=kernel_sigma,
-                            mode='nearest'
-                        )
+                        mean = group
+                        sem = df.at[index,f'spike_counts_{unit_index}_sem']
 
                         line, = ax[ax_plot].plot(
                             bin_centers,
-                            mean,
+                            mean/bin_size,
                             label=row[group_by]
                         )
                         color = line.get_color()
 
                         ax[ax_plot].fill_between(
                             bin_centers,
-                            mean - sem,
-                            mean + sem,
+                            (mean - sem)/bin_size,
+                            (mean + sem)/bin_size,
                             color=color,
                             alpha=0.3
                         )
@@ -562,6 +628,222 @@ class Neuralplot:
             # asdasd
             ax.set_title(f'Channel: {channel}; Unit index: {unit_index}')
             fig_dict[unit_index] = fig
+        return fig_dict
+
+
+    ### PLOTTING
+    def plotPSTH_new(self, channel_list, params, align_to='sample_on',
+                    window=(0.4,1.0), bin_size=0.001,
+                    subplots=None, split_by=None,
+                    overlay=False, figsize=(7,10),
+                    orientation='h'):
+        """
+        Simple PSTH plot function
+
+        Args:
+            params (dict): flexible params for what to plot formatted as dict like:
+            {
+                'column_name': [desired_values]
+            }
+
+            window (int or tuple): if tuple, (left window, right window)
+
+            bin_size (numeric, time, s): size of bin for spikes
+
+            subplots (str):
+                variable that determines separate subplots
+
+            split_by (str):
+                variable that determines overlaid traces within subplot
+
+            overlay (bool): overlays groups
+        """
+
+        from scipy.ndimage import gaussian_filter1d
+
+        if not isinstance(window, tuple):
+            window = (window, window)
+
+        assert len(window) == 2, 'what you doin'
+
+        channel_list = np.atleast_1d(channel_list)
+
+        fwhm = 0.020
+        kernel_sigma = (fwhm/2.355)/bin_size
+        kernel_sigma=1
+
+        fig_dict = {}
+
+        df = filter_df(self.Dat, params)
+        df = df.reset_index(drop=True)
+
+        if align_to != 'sample_on':
+            assert False, 'not coded yet'
+
+        stims_in_order = sorted(set(df['stim_index']))
+
+        times_list = []
+
+        for i in stims_in_order:
+            row = df.loc[df['stim_index'] == i]
+            t0 = row['photodiode_time'].values[0]
+            times_list.append(t0)
+
+        dict_spike_times, index_to_channel = self.extractSpikeTimes(
+            channel_list,
+            times_list,
+            window
+        )
+
+        for unit_index, list_spike_times in dict_spike_times.items():
+
+            df[f'spike_counts_{unit_index}'] = None
+            df[f'bin_times_{unit_index}'] = None
+
+            for t0, stim_index, spike_times in zip(
+                times_list,
+                stims_in_order,
+                list_spike_times
+            ):
+
+                t_start = t0 - window[0]
+                t_end = t0 + window[1]
+
+                counts, bin_edges, bin_centers = self.spikeTimesBinCounts(
+                    spike_times,
+                    t_start,
+                    t_end,
+                    bin_size
+                )
+
+                bin_centers = bin_centers - t0
+
+                if subplots is None and split_by is None:
+
+                    fig, ax = plt.subplots(1, figsize=figsize)
+
+                    smooth_counts = gaussian_filter1d(
+                        counts,
+                        sigma=kernel_sigma,
+                        mode='nearest'
+                    )
+
+                    ax.plot(bin_centers, smooth_counts/bin_size)
+
+                    ax.axvline(0, color='red')
+
+                    ax.set_title(
+                        f'Channel: {index_to_channel[unit_index]}; '
+                        f'Unit index: {unit_index}'
+                    )
+
+                    ax.set_ylabel('fr')
+
+                else:
+
+                    mask = df['stim_index'] == stim_index
+                    dfidx = df.index[mask][0]
+
+                    df.at[dfidx, f'spike_counts_{unit_index}'] = counts
+                    df.at[dfidx, f'bin_times_{unit_index}'] = bin_centers
+
+        if subplots is not None or split_by is not None:
+            grouping_vars = []
+            if subplots is not None:
+                grouping_vars.append(subplots)
+
+            if split_by is not None:
+                grouping_vars.append(split_by)
+
+            df = group_and_average(df, grouping_vars, 'spike_counts',\
+                                   smooth=True,sigma=kernel_sigma)
+            if df is None:
+                return {}
+            
+            for col, data in df.items():
+                if 'spike_counts' in col and 'mean' in col:
+
+                    unit_index = int(col.split('_')[-2])
+
+                    if subplots is not None:
+                        subplot_levels = list(df[subplots].unique())
+                        n_subplots = len(subplot_levels)
+                    else:
+                        subplot_levels = [None]
+                        n_subplots = 1
+
+                    if orientation == 'v':
+                        fig, ax = plt.subplots(
+                            n_subplots,
+                            figsize=figsize,
+                            squeeze=False,
+                            sharex=True,
+                            sharey=True
+                        )
+                    elif orientation == 'h':
+                        fig, ax = plt.subplots(1,
+                            n_subplots,
+                            figsize=figsize,
+                            squeeze=False,
+                            sharex=True,
+                            sharey=True
+                        )
+
+                    ax = ax.flatten()
+
+                    for ax_ind, subplot_level in enumerate(subplot_levels):
+
+                        if subplot_level is None:
+                            df_subplot = df
+                        else:
+                            df_subplot = df[df[subplots] == subplot_level]
+
+                        for index, group in zip(df_subplot.index, df_subplot[col]):
+
+                            mean = group
+
+                            sem = df.at[index, f'spike_counts_{unit_index}_sem']
+
+                            if split_by is not None:
+                                label = df.at[index, split_by]
+                            else:
+                                label = None
+
+                            line, = ax[ax_ind].plot(
+                                bin_centers,
+                                mean/bin_size,
+                                label=label
+                            )
+
+                            color = line.get_color()
+
+                            ax[ax_ind].fill_between(
+                                bin_centers,
+                                (mean - sem)/bin_size,
+                                (mean + sem)/bin_size,
+                                color=color,
+                                alpha=0.3
+                            )
+
+                        ax[ax_ind].axvline(0, color='red')
+
+                        title = (
+                            f'Channel: {index_to_channel[unit_index]}; '
+                            f'Unit index: {unit_index}'
+                        )
+
+                        if subplot_level is not None:
+                            title += f'\n{subplots}: {subplot_level}'
+
+                        ax[ax_ind].set_title(title)
+
+                        ax[ax_ind].set_ylabel('fr')
+
+                        if split_by is not None:
+                            ax[ax_ind].legend()
+
+                    fig_dict[unit_index] = fig
+
         return fig_dict
 
     def _plot_raster_line(self, ax, times, yval, color='k', alignto_time=None,
@@ -908,6 +1190,20 @@ class Neuralplot:
         stim_success_fail (list): True is fixated, False otherwise
         """
 
+        #diff codes for diff expets
+        if self.Who == 'lucas':
+            codes_no_stim = [1,4,5] #stim not seen
+            codes_success = [0,6] #
+            codes_fail = [3]
+        if self.Who == 'theo':
+            codes_no_stim = [5]
+            codes_success = [0]
+            codes_fail = [3,4]
+        if self.Who == 'Mathias':
+            codes_no_stim = [4,5]
+            codes_success = [0]
+            codes_fail = [3]
+
         dat_trial = self.ml2_dat_list[session][f'Trial{trial_ml2}']
         beh_code_times = dat_trial['BehavioralCodes']['CodeTimes']
         beh_codes = np.array(dat_trial['BehavioralCodes']['CodeNumbers'])
@@ -935,15 +1231,15 @@ class Neuralplot:
                 stim_list_user = [s.rsplit('\\')[-1].split('.')[0] for s in stim_full_user]
                 sample_error_codes_user = np.atleast_1d(self.ml2_dat_list[session]['TrialRecord']['User']['TrialData'][trial_ml2-1]['sample_error_code'])
                 stim_code_user = [c for c in sample_error_codes_user]
-                stim_list_user_drop_nofix = [stim for i,stim in enumerate(stim_list_user) if stim_code_user[i] not in [4,5]]
+                stim_list_user_drop_nofix = [stim for i,stim in enumerate(stim_list_user) if stim_code_user[i] not in codes_no_stim]
                 stim_bin_list = []
                 for code in stim_code_user:
-                    if code in [0,6]: #6 means failed fix b4 rew, but held for stim
+                    if code in codes_success: #6 means failed fix b4 rew, but held for stim
                         stim_bin_list.append(True)
-                    elif code in [3]:
+                    elif code in codes_fail:
                         #either broke fix during stim or in hold pd after
                         stim_bin_list.append(False)
-                    elif code in [1,4,5]:
+                    elif code in codes_no_stim:
                         continue
                     else:
                         assert False
@@ -1521,6 +1817,7 @@ def extract_pa_combining_visual_and_draw(nplot, DFallpa, map_bregioncombined_to_
 
     return PAall
 
+
 MAP_CHANNEL_TO_REGION = {
     #Same for both animals
     # ---- RSn2 (1–256) ----
@@ -1556,7 +1853,6 @@ REGIONS = ['M1','PMv','PMd','dlPFC','vlPFC','FP','SMA','preSMA']
 
 
         
-
 
 
 
