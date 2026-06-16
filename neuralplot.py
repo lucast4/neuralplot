@@ -28,14 +28,17 @@ def loadNeuralplot(animal, date):
         subject = 'S1'
     elif animal == 'Pancho':
         subject = 'S2'
+    
+    # basedir = '/home/danhan/code/prims_fixation_final'
+    basedir = '/lemur2/lucas/analyses/recordings/main/MIRROR/Visual/data'
 
-
-    basedir = '/home/danhan/code/prims_fixation_final'
     paths = {
     'ml2_dir': f'{basedir}/{animal}/{date}/behavior_fixation',
-    'conditions_dir': f'{basedir}/primsfix_bothmonkey.txt', 
-    'tdt_dir_fixation': f'{basedir}/{animal}/{date}/tdt_fixation',
-    'tdt_dir_draw': f'{basedir}/{animal}/{date}/tdt_draw',
+    # 'conditions_dir': f'{basedir}/primsfix_bothmonkey.txt', 
+    # 'tdt_dir_fixation': f'{basedir}/{animal}/{date}/tdt_fixation',
+    # 'tdt_dir_draw': f'{basedir}/{animal}/{date}/tdt_draw',
+    'tdt_dir_fixation': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
+    'tdt_dir_draw': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
     'spikes_dir': f'{basedir}/{animal}/{date}/spikes_postprocess/DATSTRUCT_CLEAN_MERGED.mat'
     }
 
@@ -198,10 +201,19 @@ class Neuralplot:
         self._session_rec_names = tdt_list_ordered
         for i,tdt_session in enumerate(tdt_list_ordered):
             if tdt_session in tdt_list_fixation:
-                fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}"
-                session_data = read_block(fullpath,
-                                        evtype=evs_load,
-                                        store=stores_load)
+                # Load, whihc directory you use seems to differ for LT vs. DH
+                try:
+                    fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}"
+                    session_data = read_block(fullpath,
+                                            evtype=evs_load,
+                                            store=stores_load)
+                    assert session_data is not None
+                except AssertionError:
+                    fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}/{tdt_session}"
+                    session_data = read_block(fullpath,
+                                            evtype=evs_load,
+                                            store=stores_load)
+                    assert session_data is not None
                 tdt_dat_dict[i] = session_data
         return tdt_dat_dict
 
@@ -222,6 +234,7 @@ class Neuralplot:
         spikes_data = mat73.loadmat(self.paths['spikes_dir'])['DATSTRUCT']
         df = pd.DataFrame.from_dict(spikes_data)
 
+        assert isinstance(self._date, str), "the following will fail silently"
         if self._animal == 'Pancho' and self._date == '260219':
             # fix issue with some arrs being flipped from the expected channel mapping
             #on this specific day
@@ -934,7 +947,11 @@ class Neuralplot:
                         continue
                     else:
                         assert False
-                assert len(stim_bin_list) == len(stim_list_user_drop_nofix) == len(stim_code_times)        
+                if not len(stim_bin_list) == len(stim_list_user_drop_nofix) == len(stim_code_times):
+                    print(len(stim_bin_list), stim_bin_list)
+                    print(len(stim_list_user_drop_nofix), stim_list_user_drop_nofix)
+                    print(len(stim_code_times), stim_code_times)
+                    assert False
 
                 # print(stim_list_user_drop_nofix)
                 # print(stim_each_present)
@@ -1085,16 +1102,424 @@ class Neuralplot:
                 assert False
 
 
+def lt_map_stimname_to_actual_shape_params(dfstim):
+    """
+    [Preprocess] Map trials to their shape names
+    dfstim = nplot.Dat
+    """
+    from scipy.io import loadmat
+
+    ### Get the index of the stim
+    def f(x):
+        ind = x.find("-")
+        return int(x[ind+1:])
+    dfstim["stim_name_index"] = dfstim["stim_name"].apply(f)
+
+    ### 
+    stim_load_dir = "/home/lucas/code/dragmonkey/MonkeyLogicCode/task/drag/task_rendered_images/baseprims_novel_remixes"
+    res = []
+    for stim_name_index in sorted(dfstim["stim_name_index"].unique().tolist()):
+
+        # path_taskstruct = f"{stim_load_dir}/taskstruct-{stim_name_index}.mat"
+        # path_pos = f"{stim_load_dir}/pos_final-{stim_name_index}.mat"
+        # from pymatreader import read_mat
+
+        # # This returns a dictionary with nested structures already cleaned up
+        # data = read_mat(path_taskstruct)
+        # import mat73
+
+        # # This will likely resolve the 'MatlabOpaque' into a nested dict
+        # data = mat73.loadmat(path)
+
+        # # Access your class properties directly
+        # task_data = data['your_struct_name']['TaskClass']
+        # print(task_data.keys())
+
+        # GOOD.
+        path_taskstruct = f"{stim_load_dir}/taskstruct-{stim_name_index}-struct.mat"
+        data = loadmat(path_taskstruct, simplify_cells=True)
         
+        # GOOD -- get the LOS set
+        los_ver = data["TaskNew"]["Task"]["info"]["load_old_set_ver"]
+        los_set = data["TaskNew"]["Task"]["info"]["load_old_set_setnum"]
+        los_ind = data["TaskNew"]["Task"]["info"]["load_old_set_indthis"]
+        los_info = (los_ver, los_set, los_ind)
 
+        # GOOD -- get the prims
+        if len(data["TaskNew"]["Plan"]["Prims"][1])>4:
+            # ('prot', length, rot, color, do_reflect)
+            do_reflect = data["TaskNew"]["Plan"]["Prims"][1][4]
+        else:
+            # ('prot', length, rot)
+            do_reflect = 0
+        prim = tuple([data["TaskNew"]["Plan"]["Prims"][0]] + data["TaskNew"]["Plan"]["Prims"][1][1:3].tolist() + [do_reflect])
+        
+        # print(data["TaskNew"]["Plan"]["Prims"])
+        # if stim_name_index==1:
+        #     asdsad    
 
+        # Also extract the image coordinates
+        path_pos = f"{stim_load_dir}/pos_final-{stim_name_index}.mat"
+        data_pos = loadmat(path_pos, simplify_cells=True)
+        
+        res.append({
+            "stim_name_index":stim_name_index,
+            "path_taskstruct":path_taskstruct,
+            "prim":prim,
+            "los_info":los_info,
+            "coordinates":data_pos["pos_final"],
+        })
+
+        print(stim_name_index, " -- ", prim)
+
+    dfinfo = pd.DataFrame(res)
+    dfinfo.to_csv("/tmp/info.csv")    
+    # fig, ax = plt.subplots()
+    # pos = data_pos["pos_final"]
+    # ax.plot(pos[:, 0], pos[:, 1])
+
+    ### Assign back to dfinfo
+    def f(x):
+        if x["los_info"][:2] == ("singleprims", 187):
+            return "baseprims"
+        elif x["los_info"][:2] == ("singleprims", 186):
+            return "noveledgy"
+        elif x["los_info"][0] == "singleprims_morph":
+            return "novelcurvy"
+        else:
+            print(x)
+            assert False
+    dfinfo["shapekind"] = dfinfo.apply(f, axis=1)
+
+    # Remove things that are not useful -- they are misleading
+    def f(x):
+        if x["shapekind"] == "baseprims":
+            return x["prim"]
+        else:
+            return "ignore"
+    dfinfo["prim"] = dfinfo.apply(f, axis=1)
     
+    # Now return this to the main dataframe
+    from pythonlib.tools.pandastools import slice_by_row_label
+    dftmp = slice_by_row_label(dfinfo, "stim_name_index", dfstim["stim_name_index"].tolist(), True, True)
 
+    dfstim["prim"] = dftmp["prim"]
+    dfstim["los_info"] = dftmp["los_info"]
+    dfstim["shapekind"] = dftmp["shapekind"]
 
+    return dfstim
 
+def identify_unit_in_visual_data_using_pa_chans(nplot, dfallpa):
+    """
+    Given nplot, modify kiloosrt data in nplot.spikeTimes so that each row (which is a
+    unit) is labeled with its chan id that is used in dfallpa. It does this by using kilosort 
+    QC metrics that were saved for each unit to match rows in nplot with units in dfallpa. 
+    
+    This guarantees that units are matched, even in nplot and dfallpa were etracted separately.
 
+    If dfallpa has fewer units than nplot (due to cleaning) it keeps in nplot only those units.
 
+    RETURNS:
+    - modifies nplot.spikeTimes to have columns: "site_final" and "bregion"
+    """
+    assert len(dfallpa) in [8, 16], "this shoudl have one row per bregion"
+    assert len(dfallpa["event"].unique())==1, "you have one pa per bregion"
+    assert len(dfallpa["bregion"]) == len(dfallpa["bregion"].unique())
 
+    # Given a signature of a unit, find its row in dfpachans.
+    def _identify_unit(dfpachans, Q, snr_final, chan_global_tdt):
+        """
+        Returns the one unit that matches the input signature. Fails if finds 
+        number of units more than one.
+
+        If zero, then returns None, None, None (assuming this is becuase dfpachans pruned
+        units, so you can't find them)
+        
+        RETURNS:
+        - bregion_combined, bregion, site(final unit id)
+        """
+        dftmp = dfpachans[(dfpachans["Q"] == Q) & (dfpachans["snr_final"] == snr_final) & (dfpachans["chan_tdt"] == int(chan_global_tdt))].reset_index(drop=True)
+        
+        if len(dftmp)==0:
+            return None, None, None
+        elif not len(dftmp)==1:
+            print(len(dftmp))
+            print(dftmp)
+            print(Q, snr_final, chan_global_tdt)
+            assert False
+        else:
+            # display(dftmp)
+            return dftmp.loc[0, ["bregion_combined", "bregion", "chan"]].values.tolist()
+    # Q = 0.04965934034607601
+    # snr_final = 7.802673810960552
+    # chan_global = 9.0
+    # _identify_unit(dfpachans, Q, snr_final, chan_global)
+
+    # Concat all PAs
+    list_df = [pa.Xlabels["chans"] for pa in dfallpa["pa"]]
+    dfpachans = pd.concat(list_df, axis=0).reset_index(drop=True)
+
+    # Link each row of Dan's data to a specific unit number in DFallPa, using Q and snr_final, etc.
+    # --- write a function to dynamically do this: (PA, dandata) --> dandata(with site number as new column)
+    # - Then make PA from Dan's data.
+    def f(x):
+        _, _, site = _identify_unit(dfpachans, x["Q"], x["snr_final"], x["chan_global"])
+        if site is None:
+            return np.nan
+        else:
+            return int(site)
+    tmp = nplot.spikeTimes.apply(f, axis=1)
+    # Check that got all the units that you expect to get
+    n_na = sum(tmp.isna())
+    n_tot = len(tmp)
+    assert n_tot - n_na == len(dfpachans)
+    nplot.spikeTimes["site_final"] = tmp
+
+    # Do it for bregion
+    def f(x):
+        _, bregion, _ = _identify_unit(dfpachans, x["Q"], x["snr_final"], x["chan_global"])
+        if bregion is None:
+            return np.nan
+        else:
+            return bregion
+    tmp = nplot.spikeTimes.apply(f, axis=1)
+    nplot.spikeTimes["bregion"] = tmp
+
+    # Do it for bregion_combined
+    def f(x):
+        bregion_combined, _, _ = _identify_unit(dfpachans, x["Q"], x["snr_final"], x["chan_global"])
+        if bregion_combined is None:
+            return np.nan
+        else:
+            return bregion_combined
+    tmp = nplot.spikeTimes.apply(f, axis=1)
+    nplot.spikeTimes["bregion_combined"] = tmp
+
+    # Remove cases that failed to find match in dfallpa (ie cleaned units)
+    n1 = len(nplot.spikeTimes)
+    nplot.spikeTimes = nplot.spikeTimes[~nplot.spikeTimes["site_final"].isna()].reset_index(drop=True)
+    nplot.spikeTimes["site_final"] = nplot.spikeTimes["site_final"].astype(int)
+    n2 = len(nplot.spikeTimes)
+    assert n2/n1>0.5, "weird that lost so many units..."
+
+    # Sanity check that all units are unique
+    tmp = nplot.spikeTimes[~nplot.spikeTimes["site_final"].isna()]["site_final"].astype(int).unique()
+    assert len(tmp) == len(set(tmp)), "somehow repeated a unit..."
+
+def _postprocess_dflab(PAdan, shapes_draw):
+    """
+    Modifies PAdan.Xlabels["trials"] with postprocess things.
+    """
+    from pythonlib.tools.pandastools import append_col_with_grp_index
+
+    dflab = PAdan.Xlabels["trials"]
+
+    # 1. add the shape string
+    tmp = []
+    for _, row in dflab.iterrows():
+        if row["shapekind"] == "baseprims":
+            # Then extract the shape
+            lab = "-".join([str(x) for x in row["prim"]])
+        else:
+            # Then name it just by the filename
+            assert row["prim"] == "ignore"
+            # lab = row["prim"]
+            lab = f"stim-{row['stim_name_index']}"
+        tmp.append(lab)
+    dflab["shape"] = tmp
+
+    # Confirm that got all drawn shapes in visual data.
+    for sh in shapes_draw:
+        assert sh in dflab["shape"].unique()
+
+    # 2. Whether the shape was drwan
+    dflab["shape_was_drawn"] = dflab["shape"].isin(shapes_draw)
+
+    # 3. New conjunction
+    dflab = append_col_with_grp_index(dflab, ["shapekind", "shape_was_drawn"], "shapekind2")
+
+    # 4. Dummy,
+    dflab["dummy"] = "dummy"
+
+    # Store it
+    PAdan.Xlabels["trials"] = dflab
+
+def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw):
+    """
+
+    window = (-0.4, 1.0)
+    list_site = sorted(nplot.spikeTimes[nplot.spikeTimes["bregion"] == "PMv_l"]["site_final"].unique())
+
+    """
+    SMFR_TIMEBIN = 0.005
+    _SMFR_SIGMA = 0.025 # 4/20/24, # since you can always smoother further later on.
+
+    list_site = sorted(list_site)
+
+    # To get helper functions from sn.
+    from neuralmonkey.classes.session import Session
+    sn = Session([], [], [], ACTUALLY_BAREBONES_LOADING=True)
+
+    # Collect the times of the desired event
+    params = {
+        'fixation_success_binary': [True], #only plot when fixation is successful
+        'code_type': ["sample_on"]
+        #You can filter by any column/value pair here, as long as the column is present in 'Dat'
+    }
+
+    dfevent = filter_df(nplot.Dat, params).reset_index(drop=True)
+    # stim_names = dfevent["stim_name"].tolist()
+    # event_times = dfevent["photodiode_time"].values
+
+    ### Iterate over all sites, then all trials, collecting spike times and firing rates.
+    list_df = []
+    _times = None
+    res = []
+    # res = []
+    for site_final in list_site:
+        print("Site: ", site_final)
+
+        # Get single array of all spiketimes for this site
+        dftmp = nplot.spikeTimes[nplot.spikeTimes["site_final"]==site_final]
+        assert len(dftmp)==1
+        spike_times = dftmp["times_sec_all"].values[0] # (ntimes, ) # global times, in sec
+
+        # Get spike times across all trials for this site.
+        for idx_trial, row in dfevent.iterrows():
+            t_event = row["photodiode_time"] # global time, in sec
+
+            # Get event info
+            stim_name = row["stim_name"]
+
+            # Get spike timesrelative to event
+            mask = (spike_times >= t_event + window[0]) & (spike_times <= t_event + window[1])
+            # spike_times_mask = spike_times[mask]
+            spike_times_rel_event = spike_times[mask] - t_event 
+
+            # Convert spike times to rates
+            times, fr = sn.elephant_spiketrain_to_smoothedfr(spike_times_rel_event, window[0], window[1], _SMFR_SIGMA, SMFR_TIMEBIN)
+            times = np.array(times)
+
+            res.append({
+                "site_final":site_final,
+                "idx_trial":idx_trial,
+                "stim_name":stim_name,
+                "spike_times": spike_times_rel_event,
+                "smfr_rates":fr[0,:],
+                "smfr_times":times[0,:],
+            })
+
+            # Sanity check that all caseas have same time base
+            if _times is None:
+                _times = times[0,:]
+            else:
+                assert np.all(_times == times[0,:])
+        # dfspikes = 
+        # list_df.append(pd.DataFrame(res))
+    DFSPIKES = pd.DataFrame(res)
+
+    # Convert to PA
+    assert list_site == sorted(DFSPIKES["site_final"].unique())
+    trials = sorted(DFSPIKES["idx_trial"].unique())
+    times = _times
+    frmat = np.stack(DFSPIKES["smfr_rates"])
+
+    # Reshape
+    frmat = np.reshape(frmat, (len(list_site), len(trials), len(times)), order="C")
+
+    ### Generate dflab
+    # frmat2 = np.reshape(frmat, (len(trials), len(sites), len(times)), order="C")
+    # frmat2 = np.transpose(frmat2, (1,0,2))
+    res =[]
+    for idx_trial, row in dfevent.iterrows():
+
+        # Get event info
+        # stim_name = row["stim_name"]
+        res.append({
+            "idx_trial":idx_trial,
+            "stim_name":row["stim_name"],
+            "stim_name_index":row["stim_name_index"],
+            "prim":row["prim"],
+            "los_info":row["los_info"],
+            "shapekind":row["shapekind"],
+        })
+    dflab = pd.DataFrame(res)
+    # dflab["dummy"] = "dummy"
+
+    ### Finally, generate PA
+    PAdan = sn._popanal_generate_from_raw(frmat, times, list_site, trials=trials, df_label_trials=dflab, 
+                                        list_df_label_cols_get=["idx_trial", "stim_name", "stim_name_index", 
+                                                                "prim", "los_info", "shapekind"])
+
+    # Add columns to dflab
+    _postprocess_dflab(PAdan, shapes_draw)
+
+    return PAdan
+
+def extract_pa_combining_visual_and_draw(nplot, DFallpa, map_bregioncombined_to_sites, 
+        bregion_combined, window, shapes_draw):
+    """
+    Get a single PA for this bregion, where visual and drawing data are concatenated
+    along the trial axis, and it is guaranteed to be matched in chans and times axes.
+    """
+    from neuralmonkey.classes.population import concatenate_popanals_flexible, concatenate_popanals
+    from pythonlib.tools.pandastools import append_col_with_grp_index
+
+    ### Get PA
+    # Get visual
+    list_site = sorted(map_bregioncombined_to_sites[bregion_combined])
+    PAvis = extract_neural_data_as_PA(nplot, window, list_site, shapes_draw)
+
+    # Get the PA from motor
+    event = "03_samp"
+    PAplan = DFallpa[(DFallpa["bregion"] == bregion_combined) & (DFallpa["event"] == event)]["pa"].values[0]
+
+    event = "06_on_strokeidx_0"
+    PAstroke = DFallpa[(DFallpa["bregion"] == bregion_combined) & (DFallpa["event"] == event)]["pa"].values[0]
+    
+    # Add the columns used in visual data to the Drawing PAs
+    for pa in [PAplan, PAstroke]:
+        dflab = pa.Xlabels["trials"]
+        dflab["shapekind"] = "baseprims"
+        dflab["shape"] = dflab["seqc_0_shape"]
+        dflab["shape_was_drawn"] = True
+        dflab["shapekind2"] = "baseprims|1"
+        pa.Xlabels["trials"] = dflab
+
+    if False:
+        fig = PAplan.plotwrapper_smoothed_fr_split_by_label_and_subplots(1044, "seqc_0_shape", ["epoch"], add_x_zero_line=True, size=6, 
+            global_legend=False, add_legend=False)
+
+    ### First, make sure each PA uses the same labels, and time window
+    # Match the time bins between visual and draw
+    PAvis = PAvis.agg_by_time_windows_binned(0.01, 0.01)
+    PAstroke = PAstroke.slice_by_dim_values_wrapper("times", [PAvis.Times[0]-0.001, PAvis.Times[-1]+0.001])
+    PAplan = PAplan.slice_by_dim_values_wrapper("times", [PAvis.Times[0]-0.001, PAvis.Times[-1]+0.001])
+
+    # Allow them to be different by 1ms
+    assert len(PAvis.Times) == len(PAstroke.Times)
+    assert np.all(np.isclose(PAvis.Times, PAstroke.Times, atol=0.001))
+    assert np.all(np.isclose(PAvis.Times, PAplan.Times, atol=0.001))
+
+    # Give same times
+    PAvis.Times = PAstroke.Times.copy()
+    assert PAvis.Chans == PAstroke.Chans == PAplan.Chans
+
+    ### Now concat visual and draw
+    # PAall, twind = concatenate_popanals_flexible([PAvis, PAplan, PAstroke], how_deal_with_different_time_values="fail")
+    PAall = concatenate_popanals([PAvis, PAplan, PAstroke], "trials", 
+        map_idxpa_to_value = {0: "visual", 1:"draw_plan", 2:"draw_stroke"}, map_idxpa_to_value_colname="taskcondition",
+        all_pa_inherit_times_of_pa_at_this_index=0)
+
+    # Remove columns that have nan
+    dflab = PAall.Xlabels["trials"]
+    n1 = len(dflab)
+    dflab = dflab.dropna(axis=1).reset_index(drop=True)
+    assert len(dflab) == n1
+    dflab = append_col_with_grp_index(dflab, ["taskcondition", "shapekind2"], "tkx_shkind")
+    PAall.Xlabels["trials"] = dflab
+
+    return PAall
 
 MAP_CHANNEL_TO_REGION = {
     #Same for both animals
