@@ -4,7 +4,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 
-MAX_NUM_STIMS=140
+MAX_NUM_STIMS=10000000
 
 EVENT_CODES_TO_EVENT_NAME = {
     9: 'trial_start',
@@ -19,6 +19,9 @@ EVENT_CODES_TO_EVENT_NAME = {
     14: 'manual_reward'
 }
 
+for c in EVENT_CODES_TO_EVENT_NAME.keys():
+    assert c < 102, "you run into interference, all codes higher than 101 are assumed to be stims. Solve this by changing code below, search for 102"
+
 def loadNeuralplot(animal, date, who='lucas'):
     """
     loads neuralplot object for given animal and date
@@ -29,8 +32,6 @@ def loadNeuralplot(animal, date, who='lucas'):
     elif animal == 'Pancho':
         subject = 'S2'
 
-
-    
     if who == 'lucas':
         # basedir = '/home/danhan/code/prims_fixation_final'
         basedir = '/lemur2/lucas/analyses/recordings/main/MIRROR/Visual/data'
@@ -40,9 +41,10 @@ def loadNeuralplot(animal, date, who='lucas'):
         # 'conditions_dir': f'{basedir}/primsfix_bothmonkey.txt', 
         # 'tdt_dir_fixation': f'{basedir}/{animal}/{date}/tdt_fixation',
         # 'tdt_dir_draw': f'{basedir}/{animal}/{date}/tdt_draw',
+        # 'spikes_dir': f'{basedir}/{animal}/{date}/spikes_postprocess/DATSTRUCT_CLEAN_MERGED.mat'
         'tdt_dir_fixation': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
         'tdt_dir_draw': f"/home/lucas/mnt/Freiwald/ltian/recordings/{animal}/{date}",
-        'spikes_dir': f'{basedir}/{animal}/{date}/spikes_postprocess/DATSTRUCT_CLEAN_MERGED.mat'
+        'spikes_dir': f"/home/lucas/mnt/Freiwald_kgupta/kgupta/neural_data/postprocess/final_clusters/{animal}/{date}/DATSTRUCT_CLEAN_MERGED.mat"
         }
 
     elif who == 'theo':
@@ -204,12 +206,12 @@ class Neuralplot:
 
         #mostly internal attrs
         self._session_rec_names = None
+        self._animal = animal
+        self._date = str(date)
         self.ml2_dat_list = self.loadML2Data()              # dict with all trial info (convert bhv2 to mat)
         # self.conditions = self.loadCondtionsFile() # conditions file loaded from text as pd df
         self.tdt_dat_dict = self.loadTdtData()
         self._session_start_times = self.getSessionStarts()
-        self._animal = animal
-        self._date = date
         
 
         assert len(self.ml2_dat_list) > 0, 'no beh data'
@@ -250,12 +252,27 @@ class Neuralplot:
         Function to load tdt data, pretty function concats
         """
         from tdt import read_block
-        tdt_list_fixation = os.listdir(self.paths['tdt_dir_fixation'])
+
+        ### Get directories that exist (raw), split by if they are fixation vs. draw sessions
+        from neuralmonkey.utils.directory import find_rec_session_paths
+        sessions_beh_only = find_rec_session_paths(self._animal, self._date, True)
+        sessions_all = find_rec_session_paths(self._animal, self._date, False)
+        sessions_vis_only = [s for s in sessions_all if s not in sessions_beh_only]
+
+        tdt_list_fixation_actual = [s["pathfinal"] for s in sessions_vis_only]
+
+        print("Draw-only sessions:", [s["sessnum"] for s in sessions_beh_only])
+        print("Visual-only sessions:", [s["sessnum"] for s in sessions_vis_only])
+        print("ALL sessions:", [s["sessnum"] for s in sessions_all])
+
+        _tdt_list_fixation = os.listdir(self.paths['tdt_dir_fixation'])
         if 'tdt_dir_draw' in list(self.paths.keys()):
-            tdt_list_draw = os.listdir(self.paths['tdt_dir_draw'])
-            tdt_list_all = tdt_list_fixation + tdt_list_draw
+            _tdt_list_draw = os.listdir(self.paths['tdt_dir_draw'])
+            tdt_list_all = _tdt_list_fixation + _tdt_list_draw
         else:
-            tdt_list_all = tdt_list_fixation
+            tdt_list_all = _tdt_list_fixation
+        tdt_list_all = sorted(set(tdt_list_all))
+
         tdt_dat_dict = {}
         evs_load = ['streams', 'epocs']
         stores_load = ['SMa1', 'Rew/','PhD2']
@@ -263,6 +280,7 @@ class Neuralplot:
             stores_load.append('Eyee')
         if load_raw_ephys:
             stores_load.extend(['RSn2,RSn3'])
+
         #probably overcomplicated but wnated ot make sure it does what I want
         #make sure tdt list sessions are ordered properly in time
         tdt_list_ordered = []
@@ -271,23 +289,27 @@ class Neuralplot:
             for sess in tdt_list_all:
                 if sess_time == int(sess[-6:]):
                     tdt_list_ordered.append(sess)
+
         self._session_rec_names = tdt_list_ordered
+        ct = 0
         for i,tdt_session in enumerate(tdt_list_ordered):
-            if tdt_session in tdt_list_fixation:
+            if tdt_session in tdt_list_fixation_actual:
                 # Load, whihc directory you use seems to differ for LT vs. DH
-                try:
-                    fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}"
-                    session_data = read_block(fullpath,
-                                            evtype=evs_load,
-                                            store=stores_load)
-                    assert session_data is not None
-                except AssertionError:
-                    fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}/{tdt_session}"
-                    session_data = read_block(fullpath,
-                                            evtype=evs_load,
-                                            store=stores_load)
-                    assert session_data is not None
+                # try:
+                #     fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}"
+                #     session_data = read_block(fullpath,
+                #                             evtype=evs_load,
+                #                             store=stores_load)
+                #     assert session_data is not None
+                # except AssertionError:
+                fullpath = f"{self.paths['tdt_dir_fixation']}/{tdt_session}/{tdt_session}"
+                session_data = read_block(fullpath,
+                                        evtype=evs_load,
+                                        store=stores_load)
+                assert session_data is not None
                 tdt_dat_dict[i] = session_data
+                ct+=1
+        assert ct == len(tdt_list_fixation_actual)
         return tdt_dat_dict
 
     def loadCondtionsFile(self):
@@ -389,13 +411,14 @@ class Neuralplot:
         Flattens beh data into something workable
         """
         df_columns = ['trial_ml2','stim_index','stim_name','fixation_success_binary']
+        # df_columns = ['trial_ml2', 'stim_name', 'fixation_success_binary']
         df = pd.DataFrame(columns = df_columns)
         stim_index = 0 
         for session_index, dat in enumerate(self.ml2_dat_list):
             trial_nums = [int(t.split('Trial')[1]) for t in dat.keys() if (t.startswith('Trial') and t != 'TrialRecord')]
             for trial in trial_nums:
-                stim_list,stim_code_times,success_fail_list = self.getWhatStimEachPresentation(session_index,trial)
-                for stim,time,success in zip(stim_list,stim_code_times,success_fail_list):
+                stim_list, stim_code_times, success_fail_list, stim_prefix_list = self.getWhatStimEachPresentation(session_index,trial)
+                for stim, time, success, prefix in zip(stim_list,stim_code_times,success_fail_list, stim_prefix_list):
                     new_entry = pd.DataFrame([
                         {
                             'beh_session': int(session_index),
@@ -404,11 +427,12 @@ class Neuralplot:
                             'stim_index': int(stim_index), #unique index for each stim presentation, counts over sessions
                             'condition': int(dat[f'Trial{trial}']['Condition']),
                             'stim_name':stim,
+                            'stim_prefix_name':prefix,
                             'fixation_success_binary':success,
-                            'ml2_time': time/100
+                            # 'ml2_time': time/100 # 'ml2_time': time/100 # LT: not sure why this is div by 100
                         }
                     ])
-                    df = pd.concat([df,new_entry], ignore_index=True)
+                    df = pd.concat([df, new_entry], ignore_index=True)
                     stim_index += 1
         return df
     
@@ -441,8 +465,10 @@ class Neuralplot:
                     stim_counter += 1
                 else:
                     stim_index = np.nan
-                if code not in range (102,100+MAX_NUM_STIMS+2):
+
+                if code not in range(102,100+MAX_NUM_STIMS+2):
                     code_type = EVENT_CODES_TO_EVENT_NAME[code]
+
                 new_entry = pd.DataFrame([
                     {
                         'trial_ml2': trial_counter,
@@ -1210,6 +1236,11 @@ class Neuralplot:
         mask = (beh_codes >= 102) & (beh_codes <= 100+MAX_NUM_STIMS+1)
         stim_code_times = beh_code_times[mask]
 
+        # Sanity check that all codes are accounted for
+        for c in beh_codes:
+            if c<102:
+                assert c in EVENT_CODES_TO_EVENT_NAME.keys(), "there exist beh codes in this dataset which you havent acocunted for."
+
         #old method before figured out trial record should not need unless you are mathias
         # stim_list = self.getListStimNames(session,trial_ml2)
         # stim_codes = [c%100 for c in beh_codes if 102 <= c <= 131]
@@ -1225,13 +1256,20 @@ class Neuralplot:
 
         #if user recorded data exists make sure they match (all theo days should have)
         if 'TrialData' in self.ml2_dat_list[session]['TrialRecord']['User'].keys():
-                stim_full_user = self.ml2_dat_list[session]['TrialRecord']['User']['TrialData'][trial_ml2-1]['sample_filename']
+                stim_full_user = self.ml2_dat_list[session]['TrialRecord']['User']['TrialData'][trial_ml2-1]['sample_filename'] # .eg,  'D:\\LT\\all_fix\\primsfix\\omniglot_subset_manual_1\\task_rendered-alpha_9-char_9-trial_2.png'
                 if isinstance(stim_full_user, str):
                     stim_full_user = [stim_full_user]
-                stim_list_user = [s.rsplit('\\')[-1].split('.')[0] for s in stim_full_user]
+                stim_list_user = [s.rsplit('\\')[-1].split('.')[0] for s in stim_full_user] # e.g, task_rendered-79
+                stim_prefix_user = [s.rsplit('\\')[-2] for s in stim_full_user] # e.g. baseprims_novel_remixes_manual_subset_1
+                # print(stim_full_user)
+                # print(stim_prefix_user)
+                # assert False
                 sample_error_codes_user = np.atleast_1d(self.ml2_dat_list[session]['TrialRecord']['User']['TrialData'][trial_ml2-1]['sample_error_code'])
                 stim_code_user = [c for c in sample_error_codes_user]
+
+                assert len(stim_code_user) == len(stim_list_user)
                 stim_list_user_drop_nofix = [stim for i,stim in enumerate(stim_list_user) if stim_code_user[i] not in codes_no_stim]
+                stim_prefix_user_drop_nofix = [stim for i,stim in enumerate(stim_prefix_user) if stim_code_user[i] not in codes_no_stim]
                 stim_bin_list = []
                 for code in stim_code_user:
                     if code in codes_success: #6 means failed fix b4 rew, but held for stim
@@ -1247,7 +1285,12 @@ class Neuralplot:
                     print(len(stim_bin_list), stim_bin_list)
                     print(len(stim_list_user_drop_nofix), stim_list_user_drop_nofix)
                     print(len(stim_code_times), stim_code_times)
-                    assert False
+
+                    fig, ax = plt.subplots()
+                    ax.hist(beh_codes, bins=200)
+                    fig.savefig("/tmp/fig.png")
+
+                    assert False, "probably missing some codes? change this: MAX_NUM_STIMS"
 
                 # print(stim_list_user_drop_nofix)
                 # print(stim_each_present)
@@ -1264,7 +1307,7 @@ class Neuralplot:
             assert False, 'why no trial data'
 
 
-        return stim_list_user_drop_nofix, stim_code_times, stim_bin_list
+        return stim_list_user_drop_nofix, stim_code_times, stim_bin_list, stim_prefix_user_drop_nofix
     
     def AlignBehWithNeuralData(self, trial_ml2):
         """
@@ -1397,8 +1440,70 @@ class Neuralplot:
                     print(x,y)
                 assert False
 
+def lt_map_stimname_to_actual_shape_params_wrapper(nplot):
+    """
+    Get more info about stims, e.g, for baseprims, determine the shape
+    (uisng LOS from monkeylogic in matlab). 
+    
+    Wrapper: this is beucase it works not just for draw data, but splits off each dataset of the stim kinds, 
+    doing them individually, then concatting results
 
-def lt_map_stimname_to_actual_shape_params(dfstim):
+    RETURNS:
+    - modifies nplot.Dat
+    """
+    from neuralplot import _lt_map_stimname_to_actual_shape_params
+
+    list_df = []
+
+    ### DRAW
+    df = nplot.Dat[nplot.Dat["stimkind_using_stimprefix"] == "drawprims"].reset_index(drop=True)
+    df = _lt_map_stimname_to_actual_shape_params(df)
+    list_df.append(df)
+
+    ### Omniglot
+    def _parse_omniglot_stim_name(name):
+        """
+        Given string name for this omniglot stim, return
+        (alpha, char, trial)
+        
+        name = "task_rendered-alpha_13-char_12-trial_2"
+        """
+        from pythonlib.tools.stringtools import decompose_string
+        components = decompose_string(name, "-") # ['task_rendered', 'alpha_13', 'char_12', 'trial_2']
+        assert len(components)==4
+        alpha = int(components[1].split("_")[1])
+        char = int(components[2].split("_")[1])
+        trial = int(components[3].split("_")[1])
+        return alpha, char, trial
+    
+    df = nplot.Dat[nplot.Dat["stimkind_using_stimprefix"] == "omniglot"].reset_index(drop=True)
+    df["prim"] = df["stim_name"].apply(_parse_omniglot_stim_name)
+    df["los_info"] = df["prim"]
+    df["shapekind"] = "omniglot"
+    list_df.append(df)
+        
+    ### FOB
+    df = nplot.Dat[nplot.Dat["stimkind_using_stimprefix"] == "FOB"].reset_index(drop=True)
+    df["prim"] = df["stim_name"]
+    df["los_info"] = df["stim_name"]
+    df["shapekind"] = "FOB"
+    list_df.append(df)
+
+    ### COncat
+    dfall = pd.concat(list_df, axis=0).sort_values("stim_index").reset_index(drop=True)
+
+    ### SANITY CHECKS
+    # Check that you've gotten all data
+    assert len(dfall) == len(nplot.Dat)
+    assert np.all(dfall["stim_prefix_name_combined"] == nplot.Dat["stim_prefix_name_combined"])
+    assert np.all(dfall["photodiode_time"] == nplot.Dat["photodiode_time"])
+
+    ### Finalize
+    nplot.Dat = dfall
+
+    assert np.all(dfall["photodiode_time"].diff()[1:]>0), "original was not sorted correctly, ie stim_index is not chronological"
+
+def _lt_map_stimname_to_actual_shape_params(dfstim):
     """
     [Preprocess] Map trials to their shape names
     dfstim = nplot.Dat
@@ -1406,15 +1511,23 @@ def lt_map_stimname_to_actual_shape_params(dfstim):
     from scipy.io import loadmat
 
     ### Get the index of the stim
-    def f(x):
+    def _extract_index_from_stimname(x):
         ind = x.find("-")
         return int(x[ind+1:])
-    dfstim["stim_name_index"] = dfstim["stim_name"].apply(f)
+    if False: # Done inline below.
+        dfstim["stim_name_index"] = dfstim["stim_name"].apply(_extract_index_from_stimname)
 
     ### 
-    stim_load_dir = "/home/lucas/code/dragmonkey/MonkeyLogicCode/task/drag/task_rendered_images/baseprims_novel_remixes"
+    stim_load_dir = "/home/lucas/code/dragmonkey/MonkeyLogicCode/task/drag/task_rendered_images"
     res = []
-    for stim_name_index in sorted(dfstim["stim_name_index"].unique().tolist()):
+    for stim_prefix_name_combined in sorted(dfstim["stim_prefix_name_combined"].unique().tolist()):
+
+        prefix = stim_prefix_name_combined[0]
+        stimname = stim_prefix_name_combined[1]
+
+        stimname_index = _extract_index_from_stimname(stimname)
+        if False:
+            print(stim_prefix_name_combined, "|", prefix, stimname, stimname_index)
 
         # path_taskstruct = f"{stim_load_dir}/taskstruct-{stim_name_index}.mat"
         # path_pos = f"{stim_load_dir}/pos_final-{stim_name_index}.mat"
@@ -1432,41 +1545,55 @@ def lt_map_stimname_to_actual_shape_params(dfstim):
         # print(task_data.keys())
 
         # GOOD.
-        path_taskstruct = f"{stim_load_dir}/taskstruct-{stim_name_index}-struct.mat"
+        path_taskstruct = f"{stim_load_dir}/{prefix}/taskstruct-{stimname_index}-struct.mat"
         data = loadmat(path_taskstruct, simplify_cells=True)
         
         # GOOD -- get the LOS set
-        los_ver = data["TaskNew"]["Task"]["info"]["load_old_set_ver"]
-        los_set = data["TaskNew"]["Task"]["info"]["load_old_set_setnum"]
-        los_ind = data["TaskNew"]["Task"]["info"]["load_old_set_indthis"]
+        # print(path_taskstruct)
+        # try:
+        #     print(data["taskstruct_struct"].keys())
+        # except Exception as err:
+        #     pass
+
+        try:
+            TaskNew = data["TaskNew"]
+        except Exception as err:
+            TaskNew = data["taskstruct_struct"]["TaskNew"]
+        
+        los_ver = TaskNew["Task"]["info"]["load_old_set_ver"]
+        los_set = TaskNew["Task"]["info"]["load_old_set_setnum"]
+        los_ind = TaskNew["Task"]["info"]["load_old_set_indthis"]
         los_info = (los_ver, los_set, los_ind)
 
         # GOOD -- get the prims
-        if len(data["TaskNew"]["Plan"]["Prims"][1])>4:
+        if len(TaskNew["Plan"]["Prims"][1])>4:
             # ('prot', length, rot, color, do_reflect)
-            do_reflect = data["TaskNew"]["Plan"]["Prims"][1][4]
+            do_reflect = TaskNew["Plan"]["Prims"][1][4]
         else:
             # ('prot', length, rot)
             do_reflect = 0
-        prim = tuple([data["TaskNew"]["Plan"]["Prims"][0]] + data["TaskNew"]["Plan"]["Prims"][1][1:3].tolist() + [do_reflect])
+        prim = tuple([TaskNew["Plan"]["Prims"][0]] + TaskNew["Plan"]["Prims"][1][1:3].tolist() + [do_reflect])
         
         # print(data["TaskNew"]["Plan"]["Prims"])
         # if stim_name_index==1:
         #     asdsad    
 
         # Also extract the image coordinates
-        path_pos = f"{stim_load_dir}/pos_final-{stim_name_index}.mat"
+        path_pos = f"{stim_load_dir}/{prefix}/pos_final-{stimname_index}.mat"
         data_pos = loadmat(path_pos, simplify_cells=True)
         
         res.append({
-            "stim_name_index":stim_name_index,
+            "stim_prefix_name_combined":stim_prefix_name_combined,
+            # "stim_name_index":stimname_index,
+            "stim_prefix_name": prefix,
+            "stim_name":stimname,
             "path_taskstruct":path_taskstruct,
             "prim":prim,
             "los_info":los_info,
             "coordinates":data_pos["pos_final"],
         })
 
-        print(stim_name_index, " -- ", prim)
+        print(prefix, stimname, stimname_index, " -- ", prim)
 
     dfinfo = pd.DataFrame(res)
     dfinfo.to_csv("/tmp/info.csv")    
@@ -1476,28 +1603,35 @@ def lt_map_stimname_to_actual_shape_params(dfstim):
 
     ### Assign back to dfinfo
     def f(x):
-        if x["los_info"][:2] == ("singleprims", 187):
+        if x["stim_prefix_name"]=="baseprims_novel_remixes" and x["los_info"][:2] == ("singleprims", 187):
             return "baseprims"
-        elif x["los_info"][:2] == ("singleprims", 186):
+        elif x["stim_prefix_name"]=="baseprims_only_bluesmall" and x["los_info"][:2] == ("singleprims", 185):
+            return "baseprims_bluesmall"
+        elif x["stim_prefix_name"]=="baseprims_only_redlarge" and x["los_info"][:2] == ("singleprims", 185):
+            return "baseprims_redlarge"
+        elif "baseprims_novel_remixes_manual_subset" in x["stim_prefix_name"] and x["los_info"][:2] == ("singleprims", 186):
             return "noveledgy"
-        elif x["los_info"][0] == "singleprims_morph":
+        elif "baseprims_novel_remixes_manual_subset" in x["stim_prefix_name"] and x["los_info"][0] == "singleprims_morph":
             return "novelcurvy"
         else:
             print(x)
-            assert False
+            assert False, "hand enter the correct name above"
     dfinfo["shapekind"] = dfinfo.apply(f, axis=1)
 
     # Remove things that are not useful -- they are misleading
     def f(x):
-        if x["shapekind"] == "baseprims":
+        if x["shapekind"] in ["baseprims", "baseprims_bluesmall", "baseprims_redlarge"]:
             return x["prim"]
-        else:
+        elif x["shapekind"] in ["noveledgy", "novelcurvy"]:
             return "ignore"
+        else:
+            print(x)
+            assert False
     dfinfo["prim"] = dfinfo.apply(f, axis=1)
     
     # Now return this to the main dataframe
     from pythonlib.tools.pandastools import slice_by_row_label
-    dftmp = slice_by_row_label(dfinfo, "stim_name_index", dfstim["stim_name_index"].tolist(), True, True)
+    dftmp = slice_by_row_label(dfinfo, "stim_prefix_name_combined", dfstim["stim_prefix_name_combined"].tolist(), True, True)
 
     dfstim["prim"] = dftmp["prim"]
     dfstim["los_info"] = dftmp["los_info"]
@@ -1602,7 +1736,7 @@ def identify_unit_in_visual_data_using_pa_chans(nplot, dfallpa):
     tmp = nplot.spikeTimes[~nplot.spikeTimes["site_final"].isna()]["site_final"].astype(int).unique()
     assert len(tmp) == len(set(tmp)), "somehow repeated a unit..."
 
-def _postprocess_dflab(PAdan, shapes_draw):
+def _postprocess_dflab(PAdan, shapes_draw, shapes_learned):
     """
     Modifies PAdan.Xlabels["trials"] with postprocess things.
     """
@@ -1613,26 +1747,36 @@ def _postprocess_dflab(PAdan, shapes_draw):
     # 1. add the shape string
     tmp = []
     for _, row in dflab.iterrows():
-        if row["shapekind"] == "baseprims":
+        if row["shapekind"] in ["baseprims", "baseprims_bluesmall", "baseprims_redlarge"]:
             # Then extract the shape
             lab = "-".join([str(x) for x in row["prim"]])
-        else:
+        elif row["shapekind"] in ["novelcurvy", "FOB", "omniglot", "noveledgy"]:
             # Then name it just by the filename
-            assert row["prim"] == "ignore"
+            # print(row["shapekind"], row["prim"])
+            # assert row["prim"] == "ignore"
             # lab = row["prim"]
-            lab = f"stim-{row['stim_name_index']}"
+            # lab = f"stim-{row['stim_name_index']}"
+            # lab = f"{row['stim_prefix_name']}|{row['stim_name']}" # So that it is unique
+            lab = f"{row['stim_name']}" # So that it is unique (this, combined with shapekind2, will generally make it unique)
+        else:
+            print(row["shapekind"], row["prim"])
+            assert False
+
         tmp.append(lab)
     dflab["shape"] = tmp
 
     # Confirm that got all drawn shapes in visual data.
-    for sh in shapes_draw:
-        assert sh in dflab["shape"].unique()
+    for s in shapes_draw:
+        assert s in dflab["shape"].unique()
 
     # 2. Whether the shape was drwan
+    for s in shapes_draw:
+        assert s in shapes_learned
     dflab["shape_was_drawn"] = dflab["shape"].isin(shapes_draw)
+    dflab["shape_was_learned"] = dflab["shape"].isin(shapes_learned)
 
     # 3. New conjunction
-    dflab = append_col_with_grp_index(dflab, ["shapekind", "shape_was_drawn"], "shapekind2")
+    dflab = append_col_with_grp_index(dflab, ["shapekind", "shape_was_learned", "shape_was_drawn"], "shapekind2")
 
     # 4. Dummy,
     dflab["dummy"] = "dummy"
@@ -1640,12 +1784,14 @@ def _postprocess_dflab(PAdan, shapes_draw):
     # Store it
     PAdan.Xlabels["trials"] = dflab
 
-def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw):
+def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw, shapes_learned):
     """
-
+    Get visual fixation data as PA, 
+    - all trials
+    - the input time window
+    - the input sites
     window = (-0.4, 1.0)
     list_site = sorted(nplot.spikeTimes[nplot.spikeTimes["bregion"] == "PMv_l"]["site_final"].unique())
-
     """
     SMFR_TIMEBIN = 0.005
     _SMFR_SIGMA = 0.025 # 4/20/24, # since you can always smoother further later on.
@@ -1685,6 +1831,7 @@ def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw):
             t_event = row["photodiode_time"] # global time, in sec
 
             # Get event info
+            stim_prefix_name = row["stim_prefix_name"]
             stim_name = row["stim_name"]
 
             # Get spike timesrelative to event
@@ -1699,6 +1846,7 @@ def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw):
             res.append({
                 "site_final":site_final,
                 "idx_trial":idx_trial,
+                "stim_prefix_name":stim_prefix_name,
                 "stim_name":stim_name,
                 "spike_times": spike_times_rel_event,
                 "smfr_rates":fr[0,:],
@@ -1733,8 +1881,10 @@ def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw):
         # stim_name = row["stim_name"]
         res.append({
             "idx_trial":idx_trial,
+            "stim_prefix_name":row["stim_prefix_name"],
             "stim_name":row["stim_name"],
-            "stim_name_index":row["stim_name_index"],
+            "stimkind_using_stimprefix":row["stimkind_using_stimprefix"],
+            # "stim_name_index":row["stim_name_index"],
             "prim":row["prim"],
             "los_info":row["los_info"],
             "shapekind":row["shapekind"],
@@ -1744,27 +1894,27 @@ def extract_neural_data_as_PA(nplot, window, list_site, shapes_draw):
 
     ### Finally, generate PA
     PAdan = sn._popanal_generate_from_raw(frmat, times, list_site, trials=trials, df_label_trials=dflab, 
-                                        list_df_label_cols_get=["idx_trial", "stim_name", "stim_name_index", 
+                                        list_df_label_cols_get=["idx_trial", "stim_prefix_name", "stim_name", "stimkind_using_stimprefix",
                                                                 "prim", "los_info", "shapekind"])
 
     # Add columns to dflab
-    _postprocess_dflab(PAdan, shapes_draw)
+    _postprocess_dflab(PAdan, shapes_draw, shapes_learned)
 
     return PAdan
 
 def extract_pa_combining_visual_and_draw(nplot, DFallpa, map_bregioncombined_to_sites, 
-        bregion_combined, window, shapes_draw):
+        bregion_combined, window, shapes_draw, shapes_learned):
     """
     Get a single PA for this bregion, where visual and drawing data are concatenated
     along the trial axis, and it is guaranteed to be matched in chans and times axes.
     """
     from neuralmonkey.classes.population import concatenate_popanals_flexible, concatenate_popanals
     from pythonlib.tools.pandastools import append_col_with_grp_index
-
+        
     ### Get PA
     # Get visual
     list_site = sorted(map_bregioncombined_to_sites[bregion_combined])
-    PAvis = extract_neural_data_as_PA(nplot, window, list_site, shapes_draw)
+    PAvis = extract_neural_data_as_PA(nplot, window, list_site, shapes_draw, shapes_learned)
 
     # Get the PA from motor
     event = "03_samp"
@@ -1774,12 +1924,16 @@ def extract_pa_combining_visual_and_draw(nplot, DFallpa, map_bregioncombined_to_
     PAstroke = DFallpa[(DFallpa["bregion"] == bregion_combined) & (DFallpa["event"] == event)]["pa"].values[0]
     
     # Add the columns used in visual data to the Drawing PAs
+    # These are all, by definition, baseprims that were drawn.
     for pa in [PAplan, PAstroke]:
         dflab = pa.Xlabels["trials"]
+        dflab["stim_prefix_name"] = "ignore"
+        dflab["stim_name"] = "ignore"
         dflab["shapekind"] = "baseprims"
         dflab["shape"] = dflab["seqc_0_shape"]
+        dflab["shapekind2"] = "baseprims|1|1"
         dflab["shape_was_drawn"] = True
-        dflab["shapekind2"] = "baseprims|1"
+        dflab["shape_was_learned"] = True
         pa.Xlabels["trials"] = dflab
 
     if False:
@@ -1816,7 +1970,6 @@ def extract_pa_combining_visual_and_draw(nplot, DFallpa, map_bregioncombined_to_
     PAall.Xlabels["trials"] = dflab
 
     return PAall
-
 
 MAP_CHANNEL_TO_REGION = {
     #Same for both animals
